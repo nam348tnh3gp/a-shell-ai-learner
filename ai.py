@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-AI TỰ HỌC - Bản fix encode URL
-Dùng DuckDuckGo + xử lý unicode đúng cách
+AI TỰ HỌC - Google Search với encode đúng
+Fix lỗi encode URL và parse kết quả Google
 """
 
 import json
@@ -19,9 +19,9 @@ except ImportError:
     HAS_LIBS = False
     print("⚠️ Cần cài: pip install requests beautifulsoup4")
 
-KNOWLEDGE_FILE = "ai_brain_fixed.json"
+KNOWLEDGE_FILE = "ai_brain_google.json"
 
-class FixedAI:
+class GoogleAI:
     def __init__(self):
         if not HAS_LIBS:
             raise Exception("Chưa cài thư viện! Chạy: pip install requests beautifulsoup4")
@@ -31,10 +31,14 @@ class FixedAI:
         
     def create_session(self):
         session = requests.Session()
+        # Headers giống trình duyệt thật
         session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
         })
         return session
     
@@ -63,74 +67,83 @@ class FixedAI:
             json.dump(self.brain, f, indent=2, ensure_ascii=False)
         print("💾 Đã lưu!")
     
-    def encode_query(self, query):
-        """Encode query đúng cách cho URL - FIX QUAN TRỌNG"""
-        # Chuyển sang ASCII an toàn
-        encoded = urllib.parse.quote(query, safe='')
-        return encoded
-    
-    def search_duckduckgo(self, query):
-        """Tìm kiếm DuckDuckGo - không bị chặn, encode đúng"""
+    def search_google(self, query):
+        """Tìm kiếm Google - FIX encode"""
         try:
-            # Encode query đúng cách
-            encoded_query = self.encode_query(query)
-            url = f"https://lite.duckduckgo.com/lite/?q={encoded_query}"
+            # CÁCH 1: Dùng encode đơn giản
+            encoded_query = urllib.parse.quote(query)
+            url = f"https://www.google.com/search?q={encoded_query}&num=5"
             
-            print(f"🔍 Tìm: '{query}'")
-            print(f"📎 URL test: {url[:80]}...")
+            print(f"🔍 Tìm Google: '{query}'")
+            print(f"📎 URL: {url[:100]}...")
             
+            # Gửi request với timeout
             response = self.session.get(url, timeout=15)
             
             if response.status_code != 200:
-                print(f"⚠️ Lỗi HTTP {response.status_code}")
+                print(f"⚠️ HTTP {response.status_code}")
                 return []
             
             html = response.text
+            
+            # Kiểm tra bị chặn
+            if 'captcha' in html.lower() or 'unusual traffic' in html.lower():
+                print("⚠️ Google chặn request, thử lại sau...")
+                return []
+            
             links = []
+            soup = BeautifulSoup(html, 'html.parser')
             
-            # Parse DuckDuckGo Lite (định dạng bảng đơn giản)
-            lines = html.split('\n')
-            
-            for i, line in enumerate(lines):
-                # Tìm link kết quả
-                if 'class="result-link"' in line or 'href="http' in line:
-                    # Lấy URL
-                    url_match = re.search(r'href="([^"]+)"', line)
-                    if url_match:
-                        link_url = url_match.group(1)
+            # Cách 1: Tìm tất cả thẻ a
+            for a in soup.find_all('a', href=True):
+                href = a['href']
+                
+                # Tìm link kết quả tìm kiếm
+                if '/url?q=' in href and 'http' in href:
+                    # Trích xuất URL thực
+                    match = re.search(r'/url\?q=(https?://[^&]+)', href)
+                    if match:
+                        real_url = match.group(1)
                         
-                        # Lấy tiêu đề (thường nằm trong thẻ a)
-                        title_match = re.search(r'>(.+?)</a>', line)
-                        if title_match:
-                            title = title_match.group(1)
-                        else:
-                            title = "Kết quả tìm kiếm"
+                        # Lấy tiêu đề từ thẻ h3 hoặc chính thẻ a
+                        title = a.get_text(strip=True)
+                        if not title or len(title) < 5:
+                            # Tìm h3 gần đó
+                            h3 = a.find_previous('h3')
+                            if h3:
+                                title = h3.get_text(strip=True)
                         
                         # Lọc link hợp lệ
-                        if link_url.startswith('http') and not any(x in link_url for x in ['duckduckgo.com', 'bing.com', 'yahoo.com']):
-                            links.append({
-                                'url': link_url,
-                                'title': title.strip()[:150]
-                            })
-                    
-                    # Dừng khi đủ số lượng
-                    if len(links) >= 3:
-                        break
+                        if title and len(title) > 5:
+                            if not any(x in real_url for x in ['google.com', 'youtube.com', 'facebook.com']):
+                                links.append({
+                                    'url': real_url,
+                                    'title': title[:150]
+                                })
             
-            # Cách 2: Tìm bằng regex đơn giản hơn
+            # Cách 2: Tìm bằng class="g"
             if not links:
-                pattern = r'<a href="(https?://[^"]+)"[^>]*>([^<]+)</a>'
-                matches = re.findall(pattern, html)
-                for url_match, title in matches[:3]:
-                    if not any(x in url_match for x in ['duckduckgo.com', 'bing.com', 'yahoo.com']):
-                        links.append({
-                            'url': url_match,
-                            'title': title.strip()[:150]
-                        })
+                for result in soup.find_all('div', class_='g'):
+                    title_tag = result.find('h3')
+                    if title_tag:
+                        title = title_tag.get_text(strip=True)
+                        link_tag = result.find('a')
+                        if link_tag and link_tag.get('href'):
+                            href = link_tag['href']
+                            if '/url?q=' in href:
+                                match = re.search(r'/url\?q=(https?://[^&]+)', href)
+                                if match:
+                                    links.append({
+                                        'url': match.group(1),
+                                        'title': title[:150]
+                                    })
+            
+            # Giới hạn 3 kết quả đầu
+            links = links[:3]
             
             print(f"✅ Tìm thấy {len(links)} link")
             for link in links:
-                print(f"   📎 {link['title'][:50]}...")
+                print(f"   📎 {link['title'][:60]}...")
             
             return links
             
@@ -152,7 +165,7 @@ class FixedAI:
             soup = BeautifulSoup(response.text, 'html.parser')
             
             # Xóa thẻ không cần thiết
-            for tag in soup(['script', 'style', 'nav', 'footer', 'header', 'meta', 'link']):
+            for tag in soup(['script', 'style', 'nav', 'footer', 'header', 'meta', 'link', 'iframe']):
                 tag.decompose()
             
             # Lấy nội dung text
@@ -160,7 +173,7 @@ class FixedAI:
             
             # Làm sạch
             text = re.sub(r'\s+', ' ', text)
-            text = text[:5000]  # Giới hạn
+            text = text[:5000]
             
             # Trích xuất câu liên quan
             sentences = re.split(r'[.!?]+', text)
@@ -169,11 +182,10 @@ class FixedAI:
             topic_words = topic.lower().split()
             for sent in sentences:
                 sent = sent.strip()
-                if len(sent) < 40 or len(sent) > 400:
+                if len(sent) < 40 or len(sent) > 500:
                     continue
                 
                 sent_lower = sent.lower()
-                # Kiểm tra liên quan
                 if any(word in sent_lower for word in topic_words[:3]):
                     relevant.append(sent)
                 
@@ -181,10 +193,9 @@ class FixedAI:
                     break
             
             if not relevant and sentences:
-                # Lấy câu đầu
                 for sent in sentences[:5]:
                     sent = sent.strip()
-                    if 40 < len(sent) < 400:
+                    if 40 < len(sent) < 500:
                         relevant.append(sent)
             
             title = soup.title.string if soup.title else url[:50]
@@ -207,7 +218,6 @@ class FixedAI:
         if not page_data or not page_data['sentences']:
             return 0
         
-        # Tạo topic nếu chưa có
         if topic not in self.brain["topics"]:
             self.brain["topics"][topic] = {
                 "learned_at": time.time(),
@@ -219,24 +229,20 @@ class FixedAI:
         topic_data = self.brain["topics"][topic]
         topic_data["times"] += 1
         
-        # Tránh học lại URL cũ
         if page_data['url'] in self.brain["learned_urls"]:
-            print(f"   ⏭️ Đã học URL này rồi")
+            print(f"   ⏭️ Đã học URL này")
             return 0
         
         self.brain["learned_urls"].append(page_data['url'])
         
-        # Lưu nguồn
         topic_data["sources"].append({
             'url': page_data['url'],
             'title': page_data['title'],
             'read_at': page_data['read_at']
         })
         
-        # Học câu mới
         new_count = 0
         for sentence in page_data['sentences']:
-            # Kiểm tra trùng
             is_dup = False
             for existing in topic_data["knowledge"]:
                 if existing['sentence'] == sentence:
@@ -258,13 +264,13 @@ class FixedAI:
         return new_count
     
     def learn_topic(self, topic):
-        """Học chủ đề: tìm kiếm -> đọc link -> học"""
+        """Học chủ đề từ Google"""
         print(f"\n{'='*60}")
-        print(f"🎓 HỌC: {topic.upper()}")
+        print(f"🎓 HỌC TỪ GOOGLE: {topic.upper()}")
         print(f"{'='*60}")
         
         # Tìm kiếm
-        links = self.search_duckduckgo(topic)
+        links = self.search_google(topic)
         
         if not links:
             print("\n⚠️ Không tìm thấy link, dùng dữ liệu mẫu")
@@ -277,7 +283,7 @@ class FixedAI:
             page = self.read_page(link['url'], topic)
             learned = self.learn_from_page(page, topic)
             total += learned
-            time.sleep(1)  # Tránh bị chặn
+            time.sleep(1.5)  # Tránh bị chặn
         
         self.brain["stats"]["searches"] += 1
         self.save_brain()
@@ -286,7 +292,8 @@ class FixedAI:
         print(f"✅ KẾT QUẢ:")
         print(f"   - Link đã đọc: {len(links)}")
         print(f"   - Kiến thức mới: {total}")
-        print(f"   - Tổng kiến thức về '{topic}': {len(self.brain['topics'].get(topic, {}).get('knowledge', []))}")
+        info_count = len(self.brain['topics'].get(topic, {}).get('knowledge', []))
+        print(f"   - Tổng kiến thức: {info_count}")
         print(f"{'='*60}")
         
         return total > 0
@@ -303,7 +310,6 @@ class FixedAI:
         
         topic_data = self.brain["topics"][topic]
         
-        # Kho kiến thức mẫu
         mock_db = {
             "python": [
                 "Python là ngôn ngữ lập trình bậc cao, được tạo bởi Guido van Rossum năm 1991.",
@@ -322,12 +328,22 @@ class FixedAI:
                 "AI (Artificial Intelligence) là trí tuệ nhân tạo, mô phỏng trí thông minh con người.",
                 "AI bao gồm nhiều lĩnh vực: Machine Learning, Deep Learning, NLP, Computer Vision, Robotics.",
                 "Alan Turing là cha đẻ của AI với Turing Test năm 1950."
+            ],
+            "deep learning": [
+                "Deep Learning là nhánh của Machine Learning sử dụng mạng neural nhiều lớp.",
+                "Deep Learning đạt thành tựu lớn trong nhận diện ảnh, xử lý ngôn ngữ tự nhiên.",
+                "Các framework Deep Learning phổ biến: TensorFlow, PyTorch, Keras."
+            ],
+            "data science": [
+                "Data Science là lĩnh vực khai thác tri thức từ dữ liệu.",
+                "Data Science kết hợp thống kê, toán học, lập trình và kiến thức chuyên ngành.",
+                "Quy trình Data Science: Thu thập -> Làm sạch -> Phân tích -> Mô hình -> Triển khai."
             ]
         }
         
-        # Tìm kiến thức phù hợp
-        knowledge_list = []
         topic_lower = topic.lower()
+        knowledge_list = []
+        
         for key, items in mock_db.items():
             if key in topic_lower or topic_lower in key:
                 knowledge_list = items
@@ -365,11 +381,10 @@ class FixedAI:
     
     def ask(self, question):
         """Trả lời câu hỏi"""
-        print(f"\n🤔 Đang suy nghĩ...")
+        print(f"\n🤔 Suy nghĩ...")
         
         question_lower = question.lower()
         
-        # Tìm chủ đề liên quan
         best_topic = None
         best_score = 0
         best_knowledge = []
@@ -397,7 +412,6 @@ class FixedAI:
         if not best_topic or best_score < 2:
             return f"🤔 Tôi chưa có kiến thức về '{question}'. Hãy chọn 'Học chủ đề' để tôi tìm hiểu!"
         
-        # Xây dựng câu trả lời
         answer = f"📖 **Về {best_topic.title()}:**\n\n"
         for i, k in enumerate(best_knowledge[:5], 1):
             answer += f"{i}. {k['sentence']}\n\n"
@@ -418,11 +432,13 @@ class FixedAI:
         print(f"\n📚 Chủ đề đã học:")
         for topic, data in self.brain["topics"].items():
             print(f"   🔹 {topic[:30]}: {len(data['knowledge'])} kiến thức")
+            if data['sources']:
+                print(f"      📖 Từ {len(data['sources'])} nguồn")
     
     def suggest_topic(self):
         """Đề xuất chủ đề"""
-        suggestions = ["python", "machine learning", "artificial intelligence", 
-                      "deep learning", "data science", "neural networks"]
+        suggestions = ["python programming", "machine learning", "artificial intelligence", 
+                      "deep learning", "data science", "neural networks", "computer vision"]
         
         for topic in suggestions:
             if topic not in self.brain["topics"] or len(self.brain["topics"][topic]["knowledge"]) < 3:
@@ -431,7 +447,12 @@ class FixedAI:
 
 def main():
     print("="*60)
-    print("🤖 AI TỰ HỌC - Bản fix encode URL")
+    print("🤖 AI TỰ HỌC - GOOGLE SEARCH")
+    print("="*60)
+    print("\n✨ Tính năng:")
+    print("   • Tìm kiếm Google thực tế")
+    print("   • Đọc nội dung từ link kết quả")
+    print("   • Học và ghi nhớ kiến thức")
     print("="*60)
     
     if not HAS_LIBS:
@@ -439,7 +460,7 @@ def main():
         return
     
     try:
-        ai = FixedAI()
+        ai = GoogleAI()
     except Exception as e:
         print(f"❌ Lỗi: {e}")
         return
@@ -449,7 +470,7 @@ def main():
     while True:
         print("\n" + "-"*40)
         print("🎯 MENU:")
-        print("   1. 🔍 Học chủ đề mới")
+        print("   1. 🔍 Học chủ đề mới (Google)")
         print("   2. 🤖 AI tự đề xuất và học")
         print("   3. 💬 Hỏi AI")
         print("   4. 📊 Xem kiến thức")
@@ -458,7 +479,7 @@ def main():
         choice = input("\n👉 Chọn (1-5): ").strip()
         
         if choice == '1':
-            topic = input("📚 Nhập chủ đề: ").strip()
+            topic = input("📚 Nhập chủ đề (VD: python, machine learning): ").strip()
             if topic:
                 ai.learn_topic(topic)
             else:
