@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-AI TỰ HỌC TOÀN DIỆN - Phiên bản Full Fix
-Hoạt động ổn định trên a-Shell mini
-Chức năng: Học từ Google (hoặc dữ liệu mẫu), trả lời câu hỏi, tự cải thiện
+AI TỰ HỌC TOÀN DIỆN - Đọc nội dung từ link
+Tìm kiếm Google -> Lấy link -> Truy cập link -> Đọc nội dung -> Học
 """
 
 import json
@@ -12,63 +11,37 @@ import random
 import re
 from datetime import datetime
 
-# Cố gắng import requests
 try:
     import requests
-    from urllib.parse import quote_plus
-    HAS_REQUESTS = True
+    from urllib.parse import quote_plus, urljoin, urlparse
+    from bs4 import BeautifulSoup
+    HAS_BS4 = True
 except ImportError:
-    HAS_REQUESTS = False
-    print("⚠️ Cần cài requests: pip install requests")
+    HAS_BS4 = False
+    print("⚠️ Cần cài: pip install requests beautifulsoup4")
 
-# File lưu trữ
-KNOWLEDGE_FILE = "ai_brain_full.json"
-CONFIG_FILE = "ai_config.json"
+KNOWLEDGE_FILE = "ai_brain_deep.json"
 
-class FullAI:
+class DeepAI:
     def __init__(self):
-        if not HAS_REQUESTS:
-            raise Exception("Chưa cài requests! Chạy: pip install requests")
+        if not HAS_BS4:
+            raise Exception("Chưa cài thư viện! Chạy: pip install requests beautifulsoup4")
         
-        self.config = self.load_config()
         self.brain = self.load_brain()
         self.session = self.create_session()
         
     def create_session(self):
-        """Tạo session với headers chống chặn"""
         session = requests.Session()
         session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9,vi;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
             'Accept-Encoding': 'gzip, deflate',
-            'DNT': '1',
             'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1'
         })
         return session
     
-    def load_config(self):
-        """Tải cấu hình"""
-        if os.path.exists(CONFIG_FILE):
-            try:
-                with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-            except:
-                return self.default_config()
-        return self.default_config()
-    
-    def default_config(self):
-        return {
-            "use_internet": True,
-            "auto_learn_interval": 0,
-            "max_results": 5,
-            "language": "vi",
-            "version": "2.0"
-        }
-    
     def load_brain(self):
-        """Tải bộ não AI"""
         if os.path.exists(KNOWLEDGE_FILE):
             try:
                 with open(KNOWLEDGE_FILE, 'r', encoding='utf-8') as f:
@@ -78,555 +51,459 @@ class FullAI:
         return self.init_brain()
     
     def init_brain(self):
-        """Khởi tạo bộ não với kiến thức nền tảng"""
         return {
-            "topics": {
-                "python": {
-                    "learned_at": time.time(),
-                    "info": [
-                        {"title": "Python là ngôn ngữ lập trình bậc cao", 
-                         "summary": "Được tạo bởi Guido van Rossum năm 1991. Cú pháp đơn giản, dễ đọc, dễ học."},
-                        {"title": "Ứng dụng của Python", 
-                         "summary": "Web development (Django/Flask), Data Science (Pandas/NumPy), AI/ML (TensorFlow/PyTorch), Automation."},
-                        {"title": "Cài đặt Python", 
-                         "summary": "Tải từ python.org, dùng pip để cài thư viện. Kiểm tra: python --version"}
-                    ],
-                    "times_learned": 1,
-                    "keywords": ["ngôn ngữ", "lập trình", "code", "script", "thư viện"]
-                },
-                "machine learning": {
-                    "learned_at": time.time(),
-                    "info": [
-                        {"title": "Machine Learning là gì?", 
-                         "summary": "Nhánh của AI cho phép máy học từ dữ liệu mà không cần lập trình rõ ràng."},
-                        {"title": "Các loại Machine Learning", 
-                         "summary": "Supervised Learning (học có giám sát), Unsupervised Learning (không giám sát), Reinforcement Learning (học tăng cường)."},
-                        {"title": "Thư viện ML phổ biến", 
-                         "summary": "Scikit-learn, TensorFlow, PyTorch, Keras, XGBoost."}
-                    ],
-                    "times_learned": 1,
-                    "keywords": ["học máy", "dữ liệu", "mô hình", "training", "AI"]
-                },
-                "artificial intelligence": {
-                    "learned_at": time.time(),
-                    "info": [
-                        {"title": "AI là gì?", 
-                         "summary": "Trí tuệ nhân tạo - mô phỏng trí thông minh con người bằng máy tính."},
-                        {"title": "Các lĩnh vực của AI", 
-                         "summary": "Machine Learning, Deep Learning, Natural Language Processing (NLP), Computer Vision, Robotics."},
-                        {"title": "Lịch sử AI", 
-                         "summary": "1950: Alan Turing đề xuất Turing Test. 1956: Thuật ngữ AI ra đời. 2010s: Bùng nổ Deep Learning."}
-                    ],
-                    "times_learned": 1,
-                    "keywords": ["trí tuệ", "thông minh", "robot", "tự động", "neural"]
-                },
-                "deep learning": {
-                    "learned_at": time.time(),
-                    "info": [
-                        {"title": "Deep Learning là gì?", 
-                         "summary": "Nhánh của Machine Learning sử dụng mạng neural nhiều lớp (deep neural networks)."},
-                        {"title": "Kiến trúc Deep Learning", 
-                         "summary": "CNN (Computer Vision), RNN/LSTM (Sequence data), Transformer (NLP), GAN (Sinh dữ liệu)."},
-                        {"title": "Framework Deep Learning", 
-                         "summary": "TensorFlow (Google), PyTorch (Facebook), Keras (API cao cấp), JAX."}
-                    ],
-                    "times_learned": 1,
-                    "keywords": ["neural network", "mạng nơ-ron", "tensorflow", "pytorch", "cnn"]
-                },
-                "data science": {
-                    "learned_at": time.time(),
-                    "info": [
-                        {"title": "Data Science là gì?", 
-                         "summary": "Khoa học dữ liệu - khai thác tri thức từ dữ liệu."},
-                        {"title": "Quy trình Data Science", 
-                         "summary": "Thu thập -> Làm sạch -> Khám phá -> Mô hình hóa -> Đánh giá -> Triển khai."},
-                        {"title": "Thư viện Data Science Python", 
-                         "summary": "Pandas (xử lý dữ liệu), NumPy (tính toán số), Matplotlib/Seaborn (trực quan hóa), Scikit-learn (ML)."}
-                    ],
-                    "times_learned": 1,
-                    "keywords": ["dữ liệu", "phân tích", "thống kê", "pandas", "numpy"]
-                }
-            },
-            "search_history": [],
-            "conversations": [],
+            "topics": {},
+            "learned_links": [],
             "stats": {
-                "total_learned": 15,  # 5 topics * 3 info
-                "questions_answered": 0,
-                "total_searches": 0,
-                "last_activity": None
+                "total_learned": 0,
+                "pages_visited": 0,
+                "total_searches": 0
             }
         }
     
     def save_brain(self):
-        """Lưu bộ não"""
         with open(KNOWLEDGE_FILE, 'w', encoding='utf-8') as f:
             json.dump(self.brain, f, indent=2, ensure_ascii=False)
-        print("💾 Đã lưu bộ não AI!")
+        print("💾 Đã lưu kiến thức!")
     
-    def save_config(self):
-        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
-            json.dump(self.config, f, indent=2)
-    
-    def search_google(self, query):
-        """Tìm kiếm Google thực tế"""
+    def search_google(self, query, num_results=3):
+        """Tìm kiếm Google và lấy danh sách link"""
         try:
-            encoded_query = quote_plus(query.encode('utf-8'))
-            url = f"https://www.google.com/search?q={encoded_query}&num=10"
+            encoded_query = quote_plus(query)
+            url = f"https://www.google.com/search?q={encoded_query}&num={num_results}"
             
-            print(f"🔍 Đang tìm kiếm: '{query}'...")
-            start_time = time.time()
-            
+            print(f"🔍 Tìm kiếm: '{query}'...")
             response = self.session.get(url, timeout=15)
-            response_time = time.time() - start_time
             
             if response.status_code != 200:
                 print(f"⚠️ Lỗi HTTP {response.status_code}")
-                return self.get_mock_data(query)
+                return []
             
-            html = response.text
+            soup = BeautifulSoup(response.text, 'html.parser')
+            links = []
             
-            # Kiểm tra bị chặn
-            if 'captcha' in html.lower() or 'unusual traffic' in html.lower():
-                print("⚠️ Google yêu cầu CAPTCHA, dùng dữ liệu mẫu")
-                return self.get_mock_data(query)
+            # Tìm tất cả link trong kết quả tìm kiếm
+            for result in soup.find_all('a'):
+                href = result.get('href', '')
+                # Link Google có dạng /url?q=...
+                if '/url?q=' in href and 'http' in href:
+                    # Trích xuất URL thực
+                    match = re.search(r'/url\?q=(https?://[^&]+)', href)
+                    if match:
+                        real_url = match.group(1)
+                        # Lấy title từ thẻ h3 gần đó
+                        title_tag = result.find_previous('h3')
+                        title = title_tag.get_text() if title_tag else "Không có tiêu đề"
+                        
+                        # Bỏ qua các link không mong muốn
+                        if not any(x in real_url for x in ['google.com/setprefs', 'accounts.google', 'support.google']):
+                            links.append({
+                                'url': real_url,
+                                'title': title[:150]
+                            })
             
-            results = self.parse_html_results(html)
+            # Lấy link đầu tiên (thường là kết quả chính)
+            links = links[:num_results]
+            print(f"✅ Tìm thấy {len(links)} link")
             
-            if results:
-                print(f"✅ Tìm thấy {len(results)} kết quả trong {response_time:.2f}s")
-                return results
-            else:
-                print("⚠️ Không parse được, dùng dữ liệu mẫu")
-                return self.get_mock_data(query)
-                
-        except requests.exceptions.Timeout:
-            print("❌ Timeout! Dùng dữ liệu mẫu")
-            return self.get_mock_data(query)
+            for link in links:
+                print(f"   📎 {link['title'][:50]}...")
+                print(f"      {link['url'][:80]}...")
+            
+            return links
+            
         except Exception as e:
-            print(f"❌ Lỗi: {e}")
-            return self.get_mock_data(query)
+            print(f"❌ Lỗi tìm kiếm: {e}")
+            return []
     
-    def parse_html_results(self, html):
-        """Parse HTML kết quả Google"""
-        results = []
-        
-        # Pattern cho kết quả tìm kiếm
-        patterns = [
-            # Pattern 1: class="g"
-            r'<div class="g"[^>]*>.*?<h3[^>]*>(.*?)</h3>.*?<div class="[^"]*(?:VwiC3b|IsZvec|aCOpRe)[^"]*"[^>]*>(.*?)</div>',
-            # Pattern 2: đơn giản hơn
-            r'<h3[^>]*>(.*?)</h3>\s*<div[^>]*>(.*?)</div>'
-        ]
-        
-        for pattern in patterns:
-            matches = re.findall(pattern, html, re.DOTALL | re.IGNORECASE)
-            for match in matches[:5]:
-                title = re.sub(r'<[^>]+>', '', match[0]).strip()
-                snippet = re.sub(r'<[^>]+>', '', match[1] if len(match) > 1 else "").strip()
-                
-                if title and len(title) > 5:
-                    results.append({
-                        "title": title[:200],
-                        "snippet": snippet[:300] if snippet else "Thông tin chi tiết về chủ đề này."
-                    })
+    def read_page_content(self, url, topic):
+        """Đọc nội dung từ một URL"""
+        try:
+            print(f"\n📖 Đang đọc: {url[:80]}...")
             
-            if results:
-                break
-        
-        return results
+            response = self.session.get(url, timeout=20)
+            
+            if response.status_code != 200:
+                print(f"   ⚠️ Không thể đọc: HTTP {response.status_code}")
+                return None
+            
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Xóa các thẻ không cần thiết
+            for tag in soup(['script', 'style', 'nav', 'footer', 'header', 'aside']):
+                tag.decompose()
+            
+            # Lấy nội dung chính
+            content = ""
+            
+            # Ưu tiên các thẻ chứa nội dung chính
+            main_tags = soup.find_all(['article', 'main', 'div', 'section'], 
+                                       class_=re.compile(r'(content|post|article|entry|main|body)', re.I))
+            
+            if main_tags:
+                for tag in main_tags[:2]:
+                    text = tag.get_text(separator=' ', strip=True)
+                    if len(text) > len(content):
+                        content = text
+            else:
+                # Fallback: lấy body
+                body = soup.find('body')
+                if body:
+                    content = body.get_text(separator=' ', strip=True)
+            
+            # Làm sạch nội dung
+            content = re.sub(r'\s+', ' ', content)
+            content = content[:3000]  # Giới hạn 3000 ký tự
+            
+            # Trích xuất đoạn liên quan đến topic
+            sentences = re.split(r'[.!?]+', content)
+            relevant_sentences = []
+            
+            topic_words = set(topic.lower().split())
+            for sentence in sentences:
+                sentence_lower = sentence.lower()
+                # Kiểm tra câu có chứa từ khóa không
+                if any(word in sentence_lower for word in topic_words):
+                    sentence = sentence.strip()
+                    if len(sentence) > 50 and len(sentence) < 500:
+                        relevant_sentences.append(sentence)
+            
+            if not relevant_sentences:
+                # Lấy các câu đầu tiên nếu không tìm thấy
+                for sentence in sentences[:5]:
+                    sentence = sentence.strip()
+                    if len(sentence) > 50:
+                        relevant_sentences.append(sentence)
+            
+            print(f"   ✅ Đã đọc {len(content)} ký tự, trích xuất {len(relevant_sentences)} câu liên quan")
+            
+            return {
+                'title': soup.title.get_text()[:200] if soup.title else "Không có tiêu đề",
+                'content': content[:2000],
+                'sentences': relevant_sentences[:10],
+                'url': url,
+                'read_at': time.time()
+            }
+            
+        except Exception as e:
+            print(f"   ❌ Lỗi đọc trang: {e}")
+            return None
     
-    def get_mock_data(self, query):
-        """Dữ liệu mẫu mở rộng cho nhiều chủ đề"""
-        mock_database = {
-            "python": [
-                {"title": "Python Tutorial - W3Schools", "snippet": "Python là ngôn ngữ lập trình dễ học, mạnh mẽ. Hướng dẫn từ cơ bản đến nâng cao."},
-                {"title": "Python.org - Official Website", "snippet": "Trang chủ của Python. Tải Python, đọc tài liệu chính thức, tham gia cộng đồng."},
-                {"title": "Python for Beginners - Real Python", "snippet": "Học Python qua các dự án thực tế. Biến, vòng lặp, hàm, class."},
-                {"title": "Python Libraries for Data Science", "snippet": "Pandas, NumPy, Matplotlib, Scikit-learn - bộ công cụ mạnh mẽ cho Data Science."}
-            ],
-            "machine learning": [
-                {"title": "Machine Learning Crash Course - Google", "snippet": "Khóa học ML miễn phí từ Google. Học về supervised, unsupervised learning."},
-                {"title": "Scikit-learn Tutorial", "snippet": "Thư viện ML phổ biến nhất cho Python. Classification, Regression, Clustering."},
-                {"title": "Machine Learning Algorithms Explained", "snippet": "Decision Trees, Random Forest, SVM, KNN, Neural Networks - giải thích đơn giản."}
-            ],
-            "ai": [
-                {"title": "Artificial Intelligence - IBM", "snippet": "AI là gì? Lịch sử, ứng dụng và tương lai của trí tuệ nhân tạo."},
-                {"title": "AI vs Machine Learning vs Deep Learning", "snippet": "Giải thích sự khác biệt giữa AI, ML và Deep Learning."}
-            ],
-            "deep learning": [
-                {"title": "Deep Learning Book - Ian Goodfellow", "snippet": "Sách giáo khoa về Deep Learning. Mạng neural, backpropagation, optimization."},
-                {"title": "Neural Networks Explained", "snippet": "Cấu trúc neural network: input layer, hidden layers, output layer. Activation functions."}
-            ],
-            "data science": [
-                {"title": "Data Science for Beginners", "snippet": "Quy trình Data Science: Thu thập, làm sạch, phân tích, trực quan hóa dữ liệu."},
-                {"title": "Pandas Tutorial", "snippet": "Xử lý dữ liệu với Pandas: DataFrame, Series, filtering, grouping, merging."}
-            ]
-        }
+    def learn_from_page(self, page_data, topic):
+        """Học từ nội dung trang đã đọc"""
+        if not page_data:
+            return 0
         
-        query_lower = query.lower()
-        
-        # Tìm chủ đề phù hợp
-        for key, results in mock_database.items():
-            if key in query_lower or query_lower in key:
-                print(f"📚 Dùng dữ liệu mẫu cho '{query}'")
-                return results
-        
-        # Tạo kết quả động cho chủ đề mới
-        return [
-            {"title": f"Tổng quan về {query}", "snippet": f"Thông tin cơ bản về {query}. Đây là một chủ đề thú vị trong công nghệ."},
-            {"title": f"Học {query} từ cơ bản", "snippet": f"Hướng dẫn chi tiết về {query} cho người mới bắt đầu."},
-            {"title": f"Ứng dụng của {query}", "snippet": f"Các ứng dụng thực tế của {query} trong đời sống và công nghiệp."}
-        ]
-    
-    def learn_topic(self, topic):
-        """Học một chủ đề mới"""
-        print(f"\n{'='*50}")
-        print(f"📚 HỌC CHỦ ĐỀ: {topic.upper()}")
-        print(f"{'='*50}")
-        
-        # Tìm kiếm
-        results = self.search_google(topic)
-        
-        if not results:
-            print("😔 Không có kết quả để học")
-            return False
-        
-        # Tạo hoặc cập nhật topic
         if topic not in self.brain["topics"]:
             self.brain["topics"][topic] = {
                 "learned_at": time.time(),
-                "info": [],
-                "times_learned": 0,
-                "keywords": []
+                "sources": [],
+                "knowledge": [],
+                "times_learned": 0
             }
         
         topic_data = self.brain["topics"][topic]
         topic_data["times_learned"] += 1
         
-        # Học thông tin mới
+        # Tránh học lại cùng một link
+        if page_data['url'] in self.brain["learned_links"]:
+            print(f"   ⏭️ Đã học link này rồi, bỏ qua")
+            return 0
+        
+        self.brain["learned_links"].append(page_data['url'])
+        
+        # Lưu nguồn
+        topic_data["sources"].append({
+            'url': page_data['url'],
+            'title': page_data['title'],
+            'read_at': page_data['read_at']
+        })
+        
+        # Học từ các câu
         new_count = 0
-        for result in results[:self.config["max_results"]]:
+        for sentence in page_data['sentences']:
             # Kiểm tra trùng lặp
             is_duplicate = False
-            for existing in topic_data["info"]:
-                if existing["title"] == result["title"]:
+            for existing in topic_data["knowledge"]:
+                if existing['sentence'] == sentence:
+                    is_duplicate = True
+                    break
+            
+            if not is_duplicate and len(sentence) > 30:
+                topic_data["knowledge"].append({
+                    'sentence': sentence,
+                    'source': page_data['url'],
+                    'learned_at': time.time()
+                })
+                new_count += 1
+        
+        self.brain["stats"]["total_learned"] += new_count
+        self.brain["stats"]["pages_visited"] += 1
+        
+        print(f"   📚 Học được {new_count} kiến thức mới từ trang này")
+        
+        return new_count
+    
+    def learn_topic_deep(self, topic):
+        """Học sâu một chủ đề: tìm kiếm -> đọc link -> học"""
+        print(f"\n{'='*60}")
+        print(f"🎓 HỌC SÂU CHỦ ĐỀ: {topic.upper()}")
+        print(f"{'='*60}")
+        
+        # Bước 1: Tìm kiếm Google lấy link
+        links = self.search_google(topic, num_results=3)
+        
+        if not links:
+            print("⚠️ Không tìm thấy link nào, dùng dữ liệu mẫu")
+            return self.use_mock_data(topic)
+        
+        # Bước 2: Đọc từng link
+        total_learned = 0
+        for i, link in enumerate(links, 1):
+            print(f"\n--- Đọc link {i}/{len(links)} ---")
+            
+            # Đọc nội dung
+            page_data = self.read_page_content(link['url'], topic)
+            
+            # Học từ nội dung
+            learned = self.learn_from_page(page_data, topic)
+            total_learned += learned
+            
+            # Chờ một chút để tránh bị chặn
+            time.sleep(1)
+        
+        # Bước 3: Tổng kết
+        self.brain["stats"]["total_searches"] += 1
+        self.save_brain()
+        
+        print(f"\n{'='*60}")
+        print(f"✅ KẾT QUẢ HỌC TẬP:")
+        print(f"   - Chủ đề: {topic}")
+        print(f"   - Số link đã đọc: {len(links)}")
+        print(f"   - Kiến thức mới: {total_learned}")
+        print(f"   - Tổng kiến thức về '{topic}': {len(self.brain['topics'].get(topic, {}).get('knowledge', []))}")
+        print(f"{'='*60}")
+        
+        return total_learned > 0
+    
+    def use_mock_data(self, topic):
+        """Dùng dữ liệu mẫu khi không thể truy cập internet"""
+        if topic not in self.brain["topics"]:
+            self.brain["topics"][topic] = {
+                "learned_at": time.time(),
+                "sources": [],
+                "knowledge": [],
+                "times_learned": 0
+            }
+        
+        topic_data = self.brain["topics"][topic]
+        
+        mock_knowledge = {
+            "python": [
+                "Python là ngôn ngữ lập trình bậc cao, được tạo bởi Guido van Rossum.",
+                "Python có cú pháp đơn giản, dễ đọc, phù hợp cho người mới học.",
+                "Python được dùng nhiều trong AI, Machine Learning, Data Science.",
+                "Các thư viện Python phổ biến: NumPy, Pandas, TensorFlow, PyTorch."
+            ],
+            "machine learning": [
+                "Machine Learning là nhánh của AI cho phép máy học từ dữ liệu.",
+                "Có 3 loại học chính: Supervised, Unsupervised, Reinforcement Learning.",
+                "Scikit-learn là thư viện ML phổ biến nhất cho Python."
+            ],
+            "ai": [
+                "AI (Artificial Intelligence) là trí tuệ nhân tạo.",
+                "AI bao gồm Machine Learning, Deep Learning, NLP, Computer Vision."
+            ]
+        }
+        
+        topic_lower = topic.lower()
+        knowledge_list = []
+        
+        for key, items in mock_knowledge.items():
+            if key in topic_lower or topic_lower in key:
+                knowledge_list = items
+                break
+        
+        if not knowledge_list:
+            knowledge_list = [
+                f"{topic} là một chủ đề quan trọng trong công nghệ thông tin.",
+                f"Học {topic} giúp phát triển kỹ năng lập trình và tư duy logic.",
+                f"Có nhiều tài liệu và khóa học trực tuyến về {topic}."
+            ]
+        
+        new_count = 0
+        for knowledge in knowledge_list:
+            is_duplicate = False
+            for existing in topic_data["knowledge"]:
+                if existing['sentence'] == knowledge:
                     is_duplicate = True
                     break
             
             if not is_duplicate:
-                topic_data["info"].append({
-                    "title": result["title"],
-                    "summary": result.get("snippet", ""),
-                    "learned_at": time.time()
+                topic_data["knowledge"].append({
+                    'sentence': knowledge,
+                    'source': 'mock_data',
+                    'learned_at': time.time()
                 })
                 new_count += 1
-                
-                # Trích xuất từ khóa
-                words = result["title"].lower().split() + result.get("snippet", "").lower().split()
-                keywords = [w for w in words if len(w) > 4 and w not in ['this', 'that', 'with', 'from', 'have', 'will']]
-                for kw in keywords[:3]:
-                    if kw not in topic_data["keywords"]:
-                        topic_data["keywords"].append(kw)
         
-        # Cập nhật thống kê
         self.brain["stats"]["total_learned"] += new_count
-        self.brain["stats"]["total_searches"] += 1
-        self.brain["stats"]["last_activity"] = time.time()
-        
-        self.brain["search_history"].append({
-            "topic": topic,
-            "timestamp": time.time(),
-            "results_found": len(results),
-            "new_learned": new_count
-        })
-        
-        print(f"\n✅ KẾT QUẢ HỌC:")
-        print(f"   - Thông tin mới: {new_count}")
-        print(f"   - Tổng thông tin về '{topic}': {len(topic_data['info'])}")
-        print(f"   - Từ khóa phát hiện: {', '.join(topic_data['keywords'][:5])}")
-        
         self.save_brain()
-        return True
+        
+        print(f"📚 Đã học {new_count} kiến thức mẫu về '{topic}'")
+        return new_count > 0
     
-    def ask_question(self, question):
-        """Trả lời câu hỏi thông minh"""
-        print(f"\n🤔 Đang suy nghĩ về: '{question}'...")
+    def ask(self, question):
+        """Trả lời câu hỏi dựa trên kiến thức đã học"""
+        print(f"\n🤔 Suy nghĩ về: '{question}'...")
         
         question_lower = question.lower()
         
-        # Tìm chủ đề liên quan nhất
-        topic_scores = []
+        # Tìm chủ đề liên quan
+        best_topic = None
+        best_score = 0
+        best_knowledge = []
         
         for topic, data in self.brain["topics"].items():
             score = 0
+            relevant_knowledge = []
             
-            # Kiểm tra từ khóa trong câu hỏi
-            for word in question_lower.split():
-                if len(word) < 3:
-                    continue
-                    
-                # Trong tên topic
-                if word in topic.lower():
-                    score += 10
-                
-                # Trong keywords
-                for kw in data.get("keywords", []):
-                    if word in kw or kw in word:
-                        score += 5
-                
-                # Trong thông tin đã học
-                for info in data["info"]:
-                    if word in info["title"].lower():
-                        score += 3
-                    if word in info["summary"].lower():
+            for knowledge in data["knowledge"]:
+                sentence = knowledge['sentence'].lower()
+                # Tính điểm liên quan
+                for word in question_lower.split():
+                    if len(word) < 3:
+                        continue
+                    if word in sentence:
                         score += 2
+                    if word in topic.lower():
+                        score += 3
+                
+                if score > 0:
+                    relevant_knowledge.append(knowledge)
             
-            if score > 0:
-                topic_scores.append((topic, data, score))
+            if score > best_score:
+                best_score = score
+                best_topic = topic
+                best_knowledge = relevant_knowledge
         
-        # Sắp xếp theo điểm
-        topic_scores.sort(key=lambda x: x[2], reverse=True)
-        
-        if not topic_scores:
-            return self.no_knowledge_response(question)
+        if not best_topic or best_score < 2:
+            return f"🤔 Tôi chưa có kiến thức về '{question}'. Hãy chọn 'Học sâu chủ đề' để tôi tìm hiểu!"
         
         # Xây dựng câu trả lời
-        answer = f"📖 **Dựa trên kiến thức của tôi:**\n\n"
+        answer = f"📖 **Về {best_topic.title()}:**\n\n"
         
-        for topic, data, score in topic_scores[:2]:
-            answer += f"🔹 **Về {topic.title()}** (độ tin cậy: {min(100, int(score))}%)\n"
-            
-            # Lấy 2 thông tin liên quan nhất
-            relevant_infos = []
-            for info in data["info"]:
-                relevance = 0
-                for word in question_lower.split():
-                    if word in info["title"].lower():
-                        relevance += 2
-                    if word in info["summary"].lower():
-                        relevance += 1
-                relevant_infos.append((relevance, info))
-            
-            relevant_infos.sort(key=lambda x: x[0], reverse=True)
-            
-            for i, (rel, info) in enumerate(relevant_infos[:2]):
-                answer += f"   {i+1}. **{info['title']}**\n"
-                if info['summary']:
-                    answer += f"      {info['summary'][:150]}\n"
-                answer += "\n"
+        for i, knowledge in enumerate(best_knowledge[:5], 1):
+            answer += f"{i}. {knowledge['sentence']}\n\n"
         
-        # Thêm gợi ý
-        answer += f"💡 *Tôi đã học về {len(self.brain['topics'])} chủ đề. Bạn có thể hỏi thêm hoặc dạy tôi chủ đề mới!*"
-        
-        # Lưu lịch sử hội thoại
-        self.brain["conversations"].append({
-            "question": question,
-            "timestamp": time.time(),
-            "topics_used": [t for t, _, _ in topic_scores[:2]]
-        })
-        self.brain["stats"]["questions_answered"] += 1
+        answer += f"💡 *Tôi đã học từ {len(self.brain['topics'][best_topic]['sources'])} nguồn khác nhau.*"
         
         return answer
     
-    def no_knowledge_response(self, question):
-        """Trả lời khi chưa có kiến thức"""
-        return f"""🤔 *Tôi chưa có kiến thức về '{question}'*
-
-📚 **Bạn có thể giúp tôi học bằng cách:**
-1. Chọn 'Học chủ đề mới' và nhập '{question}'
-2. Hoặc dạy tôi thủ công qua menu 'Dạy AI'
-
-💡 *Tôi sẽ ghi nhớ và trả lời tốt hơn sau khi được học!*"""
-    
-    def teach_manual(self):
-        """Dạy AI thủ công"""
-        print("\n" + "="*50)
-        print("📝 DẠY AI THỦ CÔNG")
-        print("="*50)
-        print("Bạn có thể dạy AI bất kỳ kiến thức nào!")
+    def show_knowledge(self):
+        """Hiển thị kiến thức đã học"""
+        print("\n" + "="*60)
+        print("📚 KHO KIẾN THỨC CỦA AI")
+        print("="*60)
         
-        topic = input("\n📚 Chủ đề: ").strip()
-        if not topic:
-            print("❌ Chủ đề không hợp lệ!")
+        if not self.brain["topics"]:
+            print("\nChưa có kiến thức nào! Hãy chọn 'Học sâu chủ đề'")
             return
         
-        if topic not in self.brain["topics"]:
-            self.brain["topics"][topic] = {
-                "learned_at": time.time(),
-                "info": [],
-                "times_learned": 0,
-                "keywords": []
-            }
-        
-        print("\n📝 Nhập kiến thức (gõ 'done' để kết thúc):")
-        facts = []
-        while True:
-            fact = input(f"📖 Sự thật {len(facts)+1}: ").strip()
-            if fact.lower() == 'done':
-                break
-            if fact:
-                facts.append(fact)
-        
-        for fact in facts:
-            self.brain["topics"][topic]["info"].append({
-                "title": fact[:100],
-                "summary": fact,
-                "learned_at": time.time()
-            })
-        
-        self.brain["topics"][topic]["times_learned"] += 1
-        self.brain["stats"]["total_learned"] += len(facts)
-        
-        print(f"\n✅ Đã dạy AI {len(facts)} kiến thức về '{topic}'!")
-        self.save_brain()
-    
-    def show_statistics(self):
-        """Hiển thị thống kê"""
-        print("\n" + "="*50)
-        print("📊 THỐNG KÊ BỘ NÃO AI")
-        print("="*50)
-        
-        stats = self.brain["stats"]
-        print(f"\n📈 TỔNG QUAN:")
-        print(f"   - Tổng số thông tin: {stats['total_learned']}")
-        print(f"   - Số chủ đề: {len(self.brain['topics'])}")
-        print(f"   - Số câu hỏi đã trả lời: {stats['questions_answered']}")
-        print(f"   - Số lần tìm kiếm: {stats['total_searches']}")
-        
-        print(f"\n📚 DANH SÁCH CHỦ ĐỀ:")
         for topic, data in self.brain["topics"].items():
-            info_count = len(data["info"])
-            print(f"   🔹 {topic.upper()}: {info_count} thông tin")
+            print(f"\n🔹 {topic.upper()}")
+            print(f"   📝 Số kiến thức: {len(data['knowledge'])}")
+            print(f"   🔗 Số nguồn: {len(data['sources'])}")
+            print(f"   🔄 Số lần học: {data['times_learned']}")
             
-            # Hiển thị preview
-            if data["info"]:
-                preview = data["info"][-1]["title"][:50]
-                print(f"      └─ Mới nhất: {preview}...")
-        
-        if self.brain["search_history"]:
-            print(f"\n🕐 LẦN HỌC GẦN ĐÂY:")
-            for history in self.brain["search_history"][-3:]:
-                print(f"   - {history['topic']}: {history['new_learned']} thông tin mới")
+            if data["knowledge"]:
+                print(f"\n   📖 Kiến thức đã học:")
+                for i, k in enumerate(data["knowledge"][:3], 1):
+                    preview = k['sentence'][:100] + "..." if len(k['sentence']) > 100 else k['sentence']
+                    print(f"      {i}. {preview}")
     
-    def auto_learn(self):
-        """Tự động học các chủ đề phổ biến"""
-        suggested_topics = [
+    def auto_learn_suggestions(self):
+        """Đề xuất chủ đề để học"""
+        suggestions = [
             "python programming", "machine learning", "artificial intelligence",
-            "deep learning", "data science", "neural networks", "natural language processing",
-            "computer vision", "reinforcement learning", "cloud computing"
+            "deep learning", "data science", "neural networks",
+            "natural language processing", "computer vision"
         ]
         
-        # Chọn chủ đề chưa học hoặc học ít
-        best_topic = None
-        lowest_info = float('inf')
+        for topic in suggestions:
+            if topic not in self.brain["topics"] or len(self.brain["topics"][topic]["knowledge"]) < 5:
+                return topic
         
-        for topic in suggested_topics:
-            if topic not in self.brain["topics"]:
-                best_topic = topic
-                break
-            else:
-                info_count = len(self.brain["topics"][topic]["info"])
-                if info_count < lowest_info and info_count < 5:
-                    lowest_info = info_count
-                    best_topic = topic
-        
-        if not best_topic:
-            best_topic = random.choice(suggested_topics)
-        
-        print(f"\n🤖 AI quyết định tự học: {best_topic}")
-        return self.learn_topic(best_topic)
+        return random.choice(suggestions)
 
 def main():
     print("="*60)
-    print("🚀 AI TỰ HỌC TOÀN DIỆN - Full Fix Edition")
+    print("🤖 AI TỰ HỌC - ĐỌC NỘI DUNG TỪ LINK")
     print("="*60)
-    print("\n✨ TÍNH NĂNG:")
-    print("   • Học từ Google (hoặc dữ liệu mẫu)")
-    print("   • Trả lời câu hỏi thông minh")
-    print("   • Tự động đề xuất chủ đề học")
-    print("   • Dạy AI thủ công")
-    print("   • Lưu trữ kiến thức vĩnh viễn")
+    print("\nCách hoạt động:")
+    print("1. Tìm kiếm Google → Lấy link kết quả")
+    print("2. Truy cập vào từng link")
+    print("3. Đọc và trích xuất nội dung")
+    print("4. Học và ghi nhớ kiến thức")
     print("="*60)
     
-    if not HAS_REQUESTS:
+    if not HAS_BS4:
         print("\n❌ THIẾU THƯ VIỆN!")
-        print("📦 Chạy lệnh: pip install requests")
-        print("🔄 Sau đó chạy lại chương trình")
+        print("📦 Chạy lệnh: pip install requests beautifulsoup4")
         return
     
     try:
-        ai = FullAI()
+        ai = DeepAI()
     except Exception as e:
-        print(f"❌ Lỗi khởi tạo: {e}")
+        print(f"❌ Lỗi: {e}")
         return
     
-    print(f"\n📊 THÔNG TIN HIỆN TẠI:")
-    print(f"   • Kiến thức: {ai.brain['stats']['total_learned']} thông tin")
-    print(f"   • Chủ đề: {len(ai.brain['topics'])}")
-    print(f"   • Đã trả lời: {ai.brain['stats']['questions_answered']} câu hỏi")
+    print(f"\n📊 Thống kê hiện tại:")
+    print(f"   - Kiến thức: {ai.brain['stats']['total_learned']}")
+    print(f"   - Trang đã đọc: {ai.brain['stats']['pages_visited']}")
+    print(f"   - Chủ đề: {len(ai.brain['topics'])}")
     
     while True:
-        print("\n" + "-"*50)
-        print("🎯 MENU CHÍNH:")
-        print("   1. 🔍 Học chủ đề mới (tìm kiếm Google)")
-        print("   2. 🤖 AI tự động học (đề xuất thông minh)")
-        print("   3. 💬 Hỏi AI (trả lời dựa trên kiến thức)")
-        print("   4. 📝 Dạy AI thủ công (tự nhập kiến thức)")
-        print("   5. 📊 Xem thống kê & kiến thức")
-        print("   6. 🗑️ Xóa toàn bộ kiến thức (reset)")
-        print("   7. 🚪 Thoát")
+        print("\n" + "-*"*30)
+        print("\n🎯 MENU:")
+        print("   1. 🔍 Học sâu chủ đề (tìm + đọc link)")
+        print("   2. 🤖 AI tự đề xuất và học")
+        print("   3. 💬 Hỏi AI")
+        print("   4. 📊 Xem kiến thức")
+        print("   5. 🚪 Thoát")
         
-        choice = input("\n👉 Nhập lựa chọn (1-7): ").strip()
+        choice = input("\n👉 Chọn (1-5): ").strip()
         
         if choice == '1':
-            topic = input("\n📚 Nhập chủ đề cần học: ").strip()
+            topic = input("\n📚 Nhập chủ đề: ").strip()
             if topic:
-                ai.learn_topic(topic)
+                ai.learn_topic_deep(topic)
             else:
                 print("❌ Vui lòng nhập chủ đề!")
                 
         elif choice == '2':
-            print("\n🤖 AI ĐANG TỰ HỌC...")
-            ai.auto_learn()
+            topic = ai.auto_learn_suggestions()
+            print(f"\n🤖 AI đề xuất học: {topic}")
+            ai.learn_topic_deep(topic)
             
         elif choice == '3':
-            question = input("\n❓ Nhập câu hỏi của bạn: ").strip()
+            question = input("\n❓ Câu hỏi: ").strip()
             if question:
-                answer = ai.ask_question(question)
+                answer = ai.ask(question)
                 print(f"\n{answer}")
             else:
                 print("❌ Vui lòng nhập câu hỏi!")
                 
         elif choice == '4':
-            ai.teach_manual()
+            ai.show_knowledge()
             
         elif choice == '5':
-            ai.show_statistics()
-            
-        elif choice == '6':
-            confirm = input("\n⚠️ Bạn có chắc muốn xóa toàn bộ kiến thức? (yes/no): ").strip()
-            if confirm.lower() == 'yes':
-                ai.brain = ai.init_brain()
-                ai.save_brain()
-                print("✅ Đã xóa và khởi tạo lại bộ não!")
-            else:
-                print("❌ Đã hủy!")
-                
-        elif choice == '7':
-            print("\n👋 Tạm biệt! Đang lưu kiến thức...")
+            print("\n👋 Tạm biệt! Đang lưu...")
             ai.save_brain()
-            ai.save_config()
-            print("✅ Đã lưu! Hẹn gặp lại!")
+            print("✅ Đã lưu!")
             break
         else:
-            print("❌ Lựa chọn không hợp lệ! Vui lòng chọn 1-7")
+            print("❌ Chọn không hợp lệ!")
 
 if __name__ == "__main__":
-    # Tắt warning SSL nếu cần
-    try:
-        import urllib3
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-    except:
-        pass
-    
     main()
