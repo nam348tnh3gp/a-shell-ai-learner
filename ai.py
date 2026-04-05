@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-AI TỰ HỌC - Google Search + DuckDuckGo Fallback
-Fix lỗi bị chặn, tự động chuyển sang công cụ tìm kiếm dự phòng
+AI TỰ HỌC - Google + DuckDuckGo Lite + Yahoo Fallback
+Fix lỗi không lấy được link tìm kiếm
 """
 
 import json
@@ -39,7 +39,6 @@ class GoogleAI:
         
     def create_session(self):
         session = requests.Session()
-        # Chọn User-Agent ngẫu nhiên
         session.headers.update({
             'User-Agent': random.choice(USER_AGENTS),
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
@@ -54,7 +53,6 @@ class GoogleAI:
             'Sec-Fetch-User': '?1',
             'Cache-Control': 'max-age=0',
         })
-        # Thêm cookie giả lập (quan trọng để qua mặt Google)
         session.cookies.set('CONSENT', 'YES+cb', domain='.google.com')
         return session
     
@@ -83,60 +81,109 @@ class GoogleAI:
             json.dump(self.brain, f, indent=2, ensure_ascii=False)
         print("💾 Đã lưu!")
     
-    def search_duckduckgo(self, query):
-        """Tìm kiếm bằng DuckDuckGo (ít bị chặn hơn)"""
+    def search_duckduckgo_lite(self, query):
+        """Tìm kiếm bằng DuckDuckGo Lite - dễ parse, ít bị chặn"""
         try:
             encoded_query = urllib.parse.quote(query)
-            url = f"https://html.duckduckgo.com/html/?q={encoded_query}"
-            print(f"🦆 Tìm DuckDuckGo: '{query}'")
+            url = f"https://lite.duckduckgo.com/lite/?q={encoded_query}"
+            print(f"🦆 Tìm DuckDuckGo Lite: '{query}'")
             
+            # Dùng session nhưng đổi User-Agent
+            self.session.headers.update({'User-Agent': random.choice(USER_AGENTS)})
             response = self.session.get(url, timeout=15)
+            
+            if response.status_code != 200:
+                print(f"   ⚠️ HTTP {response.status_code}")
+                return []
+            
+            html = response.text
+            soup = BeautifulSoup(html, 'html.parser')
+            
+            # DuckDuckGo Lite: kết quả nằm trong thẻ <a> có target="_blank"
+            links = []
+            for a in soup.find_all('a', href=True, target='_blank'):
+                href = a['href']
+                title = a.get_text(strip=True)
+                if href and href.startswith('http') and not any(x in href for x in ['duckduckgo.com', 'lite.duckduckgo.com']):
+                    if title and len(title) > 5:
+                        links.append({'url': href, 'title': title[:150]})
+                        if len(links) >= 3:
+                            break
+            
+            # Nếu không tìm thấy, thử cách khác: tìm thẻ table kết quả
+            if not links:
+                tables = soup.find_all('table')
+                for table in tables:
+                    rows = table.find_all('tr')
+                    for row in rows:
+                        link_cell = row.find('td', class_='result-snippet')
+                        if not link_cell:
+                            continue
+                        a_tag = link_cell.find('a')
+                        if a_tag and a_tag.get('href'):
+                            href = a_tag['href']
+                            title = a_tag.get_text(strip=True)
+                            if href.startswith('http') and title:
+                                links.append({'url': href, 'title': title[:150]})
+                                if len(links) >= 3:
+                                    break
+            
+            print(f"   ✅ Tìm thấy {len(links)} link từ DuckDuckGo Lite")
+            return links
+        except Exception as e:
+            print(f"   ❌ Lỗi DuckDuckGo Lite: {e}")
+            return []
+    
+    def search_yahoo(self, query):
+        """Tìm kiếm Yahoo - fallback cuối"""
+        try:
+            encoded_query = urllib.parse.quote(query)
+            url = f"https://search.yahoo.com/search?p={encoded_query}&n=5"
+            print(f"🔶 Tìm Yahoo: '{query}'")
+            
+            self.session.headers.update({'User-Agent': random.choice(USER_AGENTS)})
+            response = self.session.get(url, timeout=15)
+            
             if response.status_code != 200:
                 return []
             
             soup = BeautifulSoup(response.text, 'html.parser')
             links = []
             
-            # DuckDuckGo HTML: kết quả nằm trong class="result__a" hoặc "result__url"
-            for result in soup.find_all('a', class_='result__a'):
-                title = result.get_text(strip=True)
-                href = result.get('href')
-                if href and href.startswith('/l/?uddg='):
-                    # Giải mã URL thực
-                    match = re.search(r'/l/\?uddg=(https?://[^&]+)', href)
-                    if match:
-                        real_url = urllib.parse.unquote(match.group(1))
-                        if real_url and not any(x in real_url for x in ['duckduckgo.com']):
-                            links.append({'url': real_url, 'title': title[:150]})
+            # Yahoo: kết quả nằm trong thẻ <a class="ac-algo fz-l ac-21th lh-24">
+            for a in soup.find_all('a', href=True):
+                href = a['href']
+                # Lọc link kết quả (thường bắt đầu bằng https://) và không phải của yahoo
+                if href.startswith('http') and 'yahoo.com' not in href and 'yimg.com' not in href:
+                    title = a.get_text(strip=True)
+                    if title and len(title) > 5:
+                        links.append({'url': href, 'title': title[:150]})
+                        if len(links) >= 3:
+                            break
+            
+            # Fallback: tìm trong thẻ h3
+            if not links:
+                for h3 in soup.find_all('h3'):
+                    a = h3.find('a')
+                    if a and a.get('href'):
+                        href = a['href']
+                        if href.startswith('http') and 'yahoo.com' not in href:
+                            title = a.get_text(strip=True)
+                            links.append({'url': href, 'title': title[:150]})
                             if len(links) >= 3:
                                 break
             
-            # Fallback: tìm tất cả link có chữ "result"
-            if not links:
-                for a in soup.find_all('a', href=True):
-                    href = a['href']
-                    if href.startswith('/l/?uddg='):
-                        match = re.search(r'/l/\?uddg=(https?://[^&]+)', href)
-                        if match:
-                            real_url = urllib.parse.unquote(match.group(1))
-                            title = a.get_text(strip=True)
-                            if title and len(title) > 5:
-                                links.append({'url': real_url, 'title': title[:150]})
-                                if len(links) >= 3:
-                                    break
-            
-            print(f"✅ DuckDuckGo tìm thấy {len(links)} link")
+            print(f"   ✅ Tìm thấy {len(links)} link từ Yahoo")
             return links
         except Exception as e:
-            print(f"❌ Lỗi DuckDuckGo: {e}")
+            print(f"   ❌ Lỗi Yahoo: {e}")
             return []
     
     def search_google(self, query):
-        """Tìm kiếm Google - có xử lý chặn và luân phiên User-Agent"""
+        """Tìm kiếm Google - cố gắng tối đa, nếu thất bại thì dùng DuckDuckGo Lite"""
         max_tries = 2
         for attempt in range(max_tries):
             try:
-                # Đổi User-Agent mỗi lần thử
                 self.session.headers.update({'User-Agent': random.choice(USER_AGENTS)})
                 encoded_query = urllib.parse.quote(query)
                 url = f"https://www.google.com/search?q={encoded_query}&num=5&hl=en&gl=us"
@@ -145,21 +192,20 @@ class GoogleAI:
                 response = self.session.get(url, timeout=20)
                 
                 if response.status_code != 200:
-                    print(f"⚠️ HTTP {response.status_code}")
+                    print(f"   ⚠️ HTTP {response.status_code}")
                     continue
                 
                 html = response.text
                 
-                # Kiểm tra bị chặn
-                if 'captcha' in html.lower() or 'unusual traffic' in html.lower() or 'Our systems have detected' in html:
-                    print("⚠️ Google chặn request, thử lại với User-Agent khác...")
+                if 'captcha' in html.lower() or 'unusual traffic' in html.lower():
+                    print("   ⚠️ Google chặn request")
                     time.sleep(2)
                     continue
                 
                 links = []
                 soup = BeautifulSoup(html, 'html.parser')
                 
-                # Cách 1: Tìm div class="g" hoặc "tF2Cxc"
+                # Parse kết quả Google (cấu trúc cũ và mới)
                 for result in soup.find_all(['div'], class_=lambda c: c and ('g' in c or 'tF2Cxc' in c)):
                     title_tag = result.find('h3')
                     if not title_tag:
@@ -187,49 +233,31 @@ class GoogleAI:
                     if len(links) >= 3:
                         break
                 
-                # Cách 2: fallback
-                if not links:
-                    for a in soup.find_all('a', href=True):
-                        href = a['href']
-                        if '/url?q=' in href:
-                            match = re.search(r'/url\?q=(https?://[^&]+)', href)
-                            if match:
-                                real_url = match.group(1)
-                                title = a.get_text(strip=True)
-                                if not title or len(title) < 5:
-                                    parent = a.find_parent()
-                                    if parent:
-                                        h3 = parent.find('h3')
-                                        if h3:
-                                            title = h3.get_text(strip=True)
-                                if title and len(title) > 5 and not any(x in real_url for x in ['google.com', 'youtube.com']):
-                                    links.append({'url': real_url, 'title': title[:150]})
-                                    if len(links) >= 3:
-                                        break
-                
                 if links:
-                    print(f"✅ Google tìm thấy {len(links)} link")
+                    print(f"   ✅ Tìm thấy {len(links)} link từ Google")
                     return links
                 else:
-                    print("⚠️ Google không trả về link nào, thử lại...")
+                    print("   ⚠️ Google không trả về link nào")
                     continue
                 
-            except requests.exceptions.Timeout:
-                print("❌ Timeout khi tìm Google")
-                continue
             except Exception as e:
-                print(f"❌ Lỗi Google: {e}")
+                print(f"   ❌ Lỗi Google: {e}")
                 continue
         
-        # Hết lần thử, fallback sang DuckDuckGo
-        print("🔄 Google thất bại, chuyển sang DuckDuckGo...")
-        return self.search_duckduckgo(query)
+        # Thử DuckDuckGo Lite
+        print("🔄 Google thất bại, chuyển sang DuckDuckGo Lite...")
+        links = self.search_duckduckgo_lite(query)
+        if links:
+            return links
+        
+        # Cuối cùng thử Yahoo
+        print("🔄 DuckDuckGo Lite cũng không có kết quả, thử Yahoo...")
+        return self.search_yahoo(query)
     
     def read_page(self, url, topic):
         """Đọc nội dung trang web"""
         try:
             print(f"\n📖 Đọc: {url[:70]}...")
-            # Đổi User-Agent trước khi đọc trang
             self.session.headers.update({'User-Agent': random.choice(USER_AGENTS)})
             response = self.session.get(url, timeout=15)
             
@@ -327,15 +355,15 @@ class GoogleAI:
         return new_count
     
     def learn_topic(self, topic):
-        """Học chủ đề từ Google (hoặc DuckDuckGo nếu Google lỗi)"""
+        """Học chủ đề từ Google (với fallback DuckDuckGo Lite và Yahoo)"""
         print(f"\n{'='*60}")
         print(f"🎓 HỌC TỪ GOOGLE: {topic.upper()}")
         print(f"{'='*60}")
         
-        links = self.search_google(topic)  # đã có fallback DuckDuckGo bên trong
+        links = self.search_google(topic)
         
         if not links:
-            print("\n⚠️ Không tìm thấy link từ cả Google và DuckDuckGo, dùng dữ liệu mẫu")
+            print("\n⚠️ Không tìm thấy link từ bất kỳ công cụ nào, dùng dữ liệu mẫu")
             return self.use_mock(topic)
         
         total = 0
@@ -359,7 +387,7 @@ class GoogleAI:
         return total > 0
     
     def use_mock(self, topic):
-        """Dữ liệu mẫu (giữ nguyên như cũ)"""
+        """Dữ liệu mẫu (giữ nguyên)"""
         if topic not in self.brain["topics"]:
             self.brain["topics"][topic] = {
                 "learned_at": time.time(),
@@ -431,7 +459,7 @@ class GoogleAI:
         return new_count > 0
     
     def ask(self, question):
-        """Trả lời câu hỏi (giữ nguyên)"""
+        """Trả lời câu hỏi"""
         print(f"\n🤔 Suy nghĩ...")
         question_lower = question.lower()
         best_topic = None
@@ -462,7 +490,6 @@ class GoogleAI:
         return answer
     
     def show_stats(self):
-        """Hiển thị thống kê (giữ nguyên)"""
         print("\n" + "="*50)
         print("📊 THỐNG KÊ")
         print("="*50)
@@ -486,10 +513,10 @@ class GoogleAI:
 
 def main():
     print("="*60)
-    print("🤖 AI TỰ HỌC - GOOGLE + DUCKDUCKGO")
+    print("🤖 AI TỰ HỌC - GOOGLE + DUCKDUCKGO LITE + YAHOO")
     print("="*60)
     print("\n✨ Tính năng:")
-    print("   • Tìm kiếm Google (tự động fallback DuckDuckGo nếu bị chặn)")
+    print("   • Tìm kiếm Google (tự động fallback DuckDuckGo Lite, Yahoo)")
     print("   • Đọc nội dung từ link kết quả")
     print("   • Học và ghi nhớ kiến thức")
     print("="*60)
