@@ -1,0 +1,136 @@
+// AI Client với lưu trữ lịch sử cục bộ
+const SERVER_URL = "https://your-app.onrender.com";
+const HISTORY_FILE = "ai_history.json";
+
+// Đọc lịch sử từ file
+function loadHistory() {
+  let fm = FileManager.local();
+  let path = fm.documentsDirectory() + "/" + HISTORY_FILE;
+  if (fm.fileExists(path)) {
+    let data = fm.readString(path);
+    return JSON.parse(data);
+  }
+  return [];
+}
+
+// Lưu lịch sử
+function saveHistory(history) {
+  let fm = FileManager.local();
+  let path = fm.documentsDirectory() + "/" + HISTORY_FILE;
+  fm.writeString(path, JSON.stringify(history, null, 2));
+}
+
+// Thêm một mục vào lịch sử
+function addToHistory(question, answer) {
+  let history = loadHistory();
+  history.unshift({
+    timestamp: new Date().toISOString(),
+    question: question,
+    answer: answer
+  });
+  // Chỉ giữ 50 mục gần nhất
+  if (history.length > 50) history.pop();
+  saveHistory(history);
+}
+
+// Hiển thị lịch sử
+async function showHistory() {
+  let history = loadHistory();
+  if (history.length === 0) {
+    await presentAlert("Chưa có lịch sử hỏi đáp nào.");
+    return;
+  }
+  let items = history.map((h, idx) => `${idx+1}. ${h.question.substring(0, 40)}...`);
+  let selection = await presentList("Chọn câu hỏi để xem lại", items);
+  if (selection !== -1) {
+    let entry = history[selection];
+    let msg = `📅 ${new Date(entry.timestamp).toLocaleString()}\n\n❓ ${entry.question}\n\n🤖 ${entry.answer}`;
+    presentAlert(msg);
+  }
+}
+
+// Học chủ đề
+async function learnTopic() {
+  let topic = await presentInput("Nhập chủ đề cần học:");
+  if (!topic) return;
+  let req = new Request(`${SERVER_URL}/learn`);
+  req.method = "POST";
+  req.headers = { "Content-Type": "application/json" };
+  req.body = JSON.stringify({ topic: topic });
+  try {
+    let res = await req.loadJSON();
+    if (res.success) {
+      let msg = `✅ Đã học ${res.new_knowledge} kiến thức mới về "${res.topic}".\nTổng: ${res.total_knowledge} kiến thức.`;
+      presentAlert(msg);
+    } else {
+      presentAlert("❌ " + res.message);
+    }
+  } catch(e) {
+    presentAlert("Lỗi kết nối server: " + e.message);
+  }
+}
+
+// Hỏi AI
+async function askAI() {
+  let question = await presentInput("Nhập câu hỏi:");
+  if (!question) return;
+  let req = new Request(`${SERVER_URL}/ask`);
+  req.method = "POST";
+  req.headers = { "Content-Type": "application/json" };
+  req.body = JSON.stringify({ question: question });
+  try {
+    let res = await req.loadJSON();
+    let answerText = res.found ? res.answer : res.answer;
+    // Lưu vào lịch sử
+    addToHistory(question, answerText);
+    presentAlert(answerText);
+  } catch(e) {
+    presentAlert("Lỗi: " + e.message);
+  }
+}
+
+// Các hàm hỗ trợ UI
+async function presentInput(prompt) {
+  let alert = new Alert();
+  alert.title = prompt;
+  alert.addTextField("", "");
+  alert.addAction("OK");
+  alert.addCancelAction("Hủy");
+  let resp = await alert.present();
+  if (resp === -1) return null;
+  return alert.textFieldValue(0);
+}
+
+async function presentAlert(msg) {
+  let alert = new Alert();
+  alert.message = msg;
+  alert.addAction("OK");
+  await alert.present();
+}
+
+async function presentList(title, items) {
+  let alert = new Alert();
+  alert.title = title;
+  for (let item of items) {
+    alert.addAction(item);
+  }
+  alert.addCancelAction("Hủy");
+  let idx = await alert.present();
+  return idx;
+}
+
+async function main() {
+  let menu = new Alert();
+  menu.title = "AI Tự Học";
+  menu.message = "Chọn chức năng";
+  menu.addAction("📚 Học chủ đề mới");
+  menu.addAction("💬 Hỏi AI (tự lưu)");
+  menu.addAction("📜 Xem lịch sử đã hỏi");
+  menu.addCancelAction("Thoát");
+  let idx = await menu.present();
+  if (idx === 0) await learnTopic();
+  else if (idx === 1) await askAI();
+  else if (idx === 2) await showHistory();
+}
+
+main();
