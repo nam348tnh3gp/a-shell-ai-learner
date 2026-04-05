@@ -31,14 +31,20 @@ class GoogleAI:
         
     def create_session(self):
         session = requests.Session()
-        # Headers giống trình duyệt thật
+        # Headers giống trình duyệt thật (cập nhật)
         session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'DNT': '1',
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Cache-Control': 'max-age=0',
         })
         return session
     
@@ -68,17 +74,14 @@ class GoogleAI:
         print("💾 Đã lưu!")
     
     def search_google(self, query):
-        """Tìm kiếm Google - FIX encode"""
+        """Tìm kiếm Google - FIX encode và parse"""
         try:
-            # CÁCH 1: Dùng encode đơn giản
             encoded_query = urllib.parse.quote(query)
-            url = f"https://www.google.com/search?q={encoded_query}&num=5"
+            url = f"https://www.google.com/search?q={encoded_query}&num=5&hl=en&gl=us"
             
             print(f"🔍 Tìm Google: '{query}'")
-            print(f"📎 URL: {url[:100]}...")
             
-            # Gửi request với timeout
-            response = self.session.get(url, timeout=15)
+            response = self.session.get(url, timeout=20)
             
             if response.status_code != 200:
                 print(f"⚠️ HTTP {response.status_code}")
@@ -87,59 +90,71 @@ class GoogleAI:
             html = response.text
             
             # Kiểm tra bị chặn
-            if 'captcha' in html.lower() or 'unusual traffic' in html.lower():
+            if 'captcha' in html.lower() or 'unusual traffic' in html.lower() or 'Our systems have detected' in html:
                 print("⚠️ Google chặn request, thử lại sau...")
+                # Thử với User-Agent khác
+                self.session.headers.update({'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'})
                 return []
             
             links = []
             soup = BeautifulSoup(html, 'html.parser')
             
-            # Cách 1: Tìm tất cả thẻ a
-            for a in soup.find_all('a', href=True):
-                href = a['href']
-                
-                # Tìm link kết quả tìm kiếm
-                if '/url?q=' in href and 'http' in href:
-                    # Trích xuất URL thực
+            # Cách 1: Tìm tất cả kết quả trong thẻ div class="g" hoặc "tF2Cxc"
+            for result in soup.find_all(['div'], class_=lambda c: c and ('g' in c or 'tF2Cxc' in c)):
+                title_tag = result.find('h3')
+                if not title_tag:
+                    continue
+                title = title_tag.get_text(strip=True)
+                link_tag = result.find('a', href=True)
+                if not link_tag:
+                    continue
+                href = link_tag['href']
+                # Xử lý link google redirect
+                if href.startswith('/url?q='):
                     match = re.search(r'/url\?q=(https?://[^&]+)', href)
                     if match:
                         real_url = match.group(1)
-                        
-                        # Lấy tiêu đề từ thẻ h3 hoặc chính thẻ a
-                        title = a.get_text(strip=True)
-                        if not title or len(title) < 5:
-                            # Tìm h3 gần đó
-                            h3 = a.find_previous('h3')
-                            if h3:
-                                title = h3.get_text(strip=True)
-                        
-                        # Lọc link hợp lệ
-                        if title and len(title) > 5:
-                            if not any(x in real_url for x in ['google.com', 'youtube.com', 'facebook.com']):
+                    else:
+                        continue
+                elif href.startswith('http'):
+                    real_url = href
+                else:
+                    continue
+                
+                # Bỏ qua các domain không mong muốn
+                if any(x in real_url for x in ['google.com', 'youtube.com', 'facebook.com', 'twitter.com']):
+                    continue
+                
+                links.append({
+                    'url': real_url,
+                    'title': title[:150]
+                })
+                
+                if len(links) >= 3:
+                    break
+            
+            # Cách 2: Nếu không tìm thấy, dùng selector fallback
+            if not links:
+                for a in soup.find_all('a', href=True):
+                    href = a['href']
+                    if '/url?q=' in href and 'http' in href:
+                        match = re.search(r'/url\?q=(https?://[^&]+)', href)
+                        if match:
+                            real_url = match.group(1)
+                            title = a.get_text(strip=True)
+                            if not title or len(title) < 5:
+                                parent = a.find_parent()
+                                if parent:
+                                    h3 = parent.find('h3')
+                                    if h3:
+                                        title = h3.get_text(strip=True)
+                            if title and len(title) > 5 and not any(x in real_url for x in ['google.com', 'youtube.com']):
                                 links.append({
                                     'url': real_url,
                                     'title': title[:150]
                                 })
-            
-            # Cách 2: Tìm bằng class="g"
-            if not links:
-                for result in soup.find_all('div', class_='g'):
-                    title_tag = result.find('h3')
-                    if title_tag:
-                        title = title_tag.get_text(strip=True)
-                        link_tag = result.find('a')
-                        if link_tag and link_tag.get('href'):
-                            href = link_tag['href']
-                            if '/url?q=' in href:
-                                match = re.search(r'/url\?q=(https?://[^&]+)', href)
-                                if match:
-                                    links.append({
-                                        'url': match.group(1),
-                                        'title': title[:150]
-                                    })
-            
-            # Giới hạn 3 kết quả đầu
-            links = links[:3]
+                                if len(links) >= 3:
+                                    break
             
             print(f"✅ Tìm thấy {len(links)} link")
             for link in links:
@@ -147,8 +162,11 @@ class GoogleAI:
             
             return links
             
+        except requests.exceptions.Timeout:
+            print("❌ Timeout khi tìm kiếm")
+            return []
         except Exception as e:
-            print(f"❌ Lỗi: {e}")
+            print(f"❌ Lỗi tìm kiếm: {e}")
             return []
     
     def read_page(self, url, topic):
@@ -283,7 +301,7 @@ class GoogleAI:
             page = self.read_page(link['url'], topic)
             learned = self.learn_from_page(page, topic)
             total += learned
-            time.sleep(1.5)  # Tránh bị chặn
+            time.sleep(random.uniform(1.5, 3.0))  # Tránh bị chặn
         
         self.brain["stats"]["searches"] += 1
         self.save_brain()
