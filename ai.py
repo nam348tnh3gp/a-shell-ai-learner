@@ -6,14 +6,13 @@ import urllib.parse
 import requests
 from bs4 import BeautifulSoup
 
-# Giả lập danh sách User-Agent
 USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0'
 ]
 
 class GoogleAI:
-    def __init__(self, brain_file="brain.json"):
+    def __init__(self, brain_file="brain_data.json"):
         self.brain_file = brain_file
         self.brain = self.load_brain()
         self.session = self.create_session()
@@ -22,105 +21,106 @@ class GoogleAI:
         session = requests.Session()
         session.headers.update({
             'User-Agent': random.choice(USER_AGENTS),
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'vi-VN,vi;q=0.9,en-US;q=0.8',
         })
         return session
 
-    # --- HỆ THỐNG GHI NHỚ ---
     def load_brain(self):
         if os.path.exists(self.brain_file):
-            with open(self.brain_file, 'r', encoding='utf-8') as f:
-                return json.load(f)
+            try:
+                with open(self.brain_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except: return {}
         return {}
 
     def save_brain(self):
         with open(self.brain_file, 'w', encoding='utf-8') as f:
             json.dump(self.brain, f, ensure_ascii=False, indent=4)
 
-    def learn(self, query, content):
-        """Lưu kiến thức mới vào bộ nhớ"""
-        self.brain[query.lower()] = {
-            "content": content[:500] + "...", # Lưu tóm tắt 500 ký tự
-            "timestamp": time.ctime()
-        }
-        self.save_brain()
-
-    # --- KHẢ NĂNG ĐỌC ---
     def get_page_content(self, url):
-        """Truy cập vào link để đọc nội dung văn bản"""
+        """Đọc và làm sạch nội dung từ trang web"""
         try:
             res = self.session.get(url, timeout=10)
+            res.encoding = 'utf-8'
             soup = BeautifulSoup(res.text, 'html.parser')
-            # Lấy các đoạn văn bản trong thẻ p
-            paragraphs = soup.find_all('p')
-            text = " ".join([p.get_text() for p in paragraphs[:5]]) # Lấy 5 đoạn đầu
-            return text.strip() if text else "Không thể đọc nội dung chi tiết."
-        except:
-            return "Lỗi khi truy cập trang web."
+            
+            # Xóa các thành phần rác
+            for script_or_style in soup(["script", "style", "nav", "footer", "header"]):
+                script_or_style.decompose()
 
-    # --- HỆ THỐNG TÌM KIẾM (GOOGLE & DUCKDUCKGO) ---
-    def search_online(self, query):
-        """Tìm kiếm link từ Google (hoặc DDG)"""
+            # Lấy các thẻ chứa nội dung quan trọng
+            content_tags = soup.find_all(['p', 'article', 'h1', 'h2'])
+            text = "\n".join([t.get_text().strip() for t in content_tags if len(t.get_text().strip()) > 20])
+            
+            return text[:1000].strip() if text else None
+        except:
+            return None
+
+    def search_google(self, query):
+        """Tìm kiếm link chất lượng từ Google"""
         links = []
         try:
-            url = f"https://www.google.com/search?q={urllib.parse.quote(query)}&hl=vi"
+            # Thêm 'là gì' để Google trả về kết quả định nghĩa tốt hơn
+            search_query = f"{query} là gì" if len(query.split()) < 3 else query
+            url = f"https://www.google.com/search?q={urllib.parse.quote(search_query)}&hl=vi"
+            
             res = self.session.get(url, timeout=10)
             soup = BeautifulSoup(res.text, 'html.parser')
-            
+
             for a in soup.find_all('a'):
                 href = a.get('href', '')
+                # Bóc tách link từ redirect của Google
                 if '/url?q=' in href:
-                    clean_url = href.split('/url?q=')[1].split('&')[0]
-                    clean_url = urllib.parse.unquote(clean_url)
-                    if 'google.com' not in clean_url:
-                        title = a.find('h3').get_text() if a.find('h3') else "No Title"
-                        links.append({'url': clean_url, 'title': title})
+                    link = href.split('/url?q=')[1].split('&')[0]
+                    link = urllib.parse.unquote(link)
+                    if 'google.com' not in link and link.startswith('http'):
+                        links.append(link)
                 if len(links) >= 3: break
-        except:
-            pass
+        except Exception as e:
+            print(f"Lỗi tìm kiếm: {e}")
         return links
 
-    # --- XỬ LÝ TƯƠNG TÁC CHÍNH ---
     def chat(self, user_input):
-        user_input_low = user_input.lower()
+        user_input = user_input.strip()
+        tag = user_input.lower()
 
-        # 1. Kiểm tra xem đã học chưa
-        if user_input_low in self.brain:
-            print(f"🤖 AI (Bộ nhớ): Tôi đã học điều này vào {self.brain[user_input_low]['timestamp']}:")
-            return self.brain[user_input_low]['content']
+        # 1. Kiểm tra bộ nhớ
+        if tag in self.brain:
+            info = self.brain[tag]
+            return f"🤖 AI (Đã học ngày {info['date']}):\n{info['content']}"
 
-        # 2. Nếu chưa biết, đi tìm kiếm
-        print(f"🤖 AI: Kiến thức này mới quá, đợi tôi tí để lên mạng học...")
-        results = self.search_online(user_input)
+        # 2. Tìm kiếm online
+        print(f"🔍 Đang học về: {user_input}...")
+        urls = self.search_google(user_input)
+        
+        if not urls:
+            return "❌ Tôi không tìm thấy tài liệu nào phù hợp trên mạng."
 
-        if not results:
-            return "🤖 AI: Xin lỗi, tôi không tìm thấy thông tin này trên mạng."
+        # 3. Thử đọc từng link cho đến khi có nội dung
+        for url in urls:
+            print(f"📖 Đang đọc: {url}")
+            content = self.get_page_content(url)
+            if content and len(content) > 100:
+                # Lưu vào bộ não
+                self.brain[tag] = {
+                    "content": content,
+                    "source": url,
+                    "date": time.strftime("%d/%m/%Y %H:%M")
+                }
+                self.save_brain()
+                return f"✅ Tôi đã học xong!\n📝 Nội dung: {content[:300]}..."
+        
+        return "⚠️ Tôi đã thấy các trang web nhưng nội dung quá khó đọc hoặc bị chặn."
 
-        # 3. Đọc link đầu tiên tìm được để "học"
-        first_link = results[0]['url']
-        print(f"📖 AI: Đang đọc tại {first_link}...")
-        knowledge = self.get_page_content(first_link)
-
-        # 4. Lưu vào bộ nhớ
-        if len(knowledge) > 20:
-            self.learn(user_input, knowledge)
-            return f"🤖 AI (Mới học): {knowledge}"
-        else:
-            return "🤖 AI: Tôi thấy link nhưng không đọc được nội dung chi tiết."
-
-# --- CHƯƠNG TRÌNH CHÍNH ---
+# --- CHẠY ---
 if __name__ == "__main__":
-    ai = GoogleAI()
-    print("=== AI TỰ HỌC ĐÃ SẴN SÀNG (Gõ 'exit' để thoát) ===")
-    
+    bot = GoogleAI()
+    print("🤖 Chào bạn! Tôi là AI tự học. Bạn muốn tôi tìm hiểu về điều gì?")
     while True:
-        query = input("\n👤 Bạn hỏi: ")
-        if query.lower() in ['exit', 'thoát', 'quit']:
-            break
-            
-        if query.strip() == "xem kiến thức":
-            print(f"📚 Bộ nhớ hiện tại: {json.dumps(ai.brain, indent=2, ensure_ascii=False)}")
+        u = input("\n👤 Bạn: ")
+        if u.lower() in ['exit', 'quit', 'thoát']: break
+        if u.lower() == "brain":
+            print(f"🧠 Số lượng từ khóa đã học: {len(bot.brain)}")
             continue
-
-        response = ai.chat(query)
-        print(response)
+        print(bot.chat(u))
