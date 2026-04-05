@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 AI TỰ HỌC - Web App cho Render.com
-Nhận request từ iPhone, tự học và trả lời thông minh.
+Bản sửa lỗi tìm kiếm – fallback DuckDuckGo HTML
 """
 
 import os
@@ -9,22 +9,28 @@ import json
 import time
 import re
 import random
-from datetime import datetime
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from duckduckgo_search import DDGS
 import requests
 from bs4 import BeautifulSoup
 
 # ================== CẤU HÌNH ==================
 app = Flask(__name__)
-CORS(app)  # Cho phép iPhone gọi API
+CORS(app)
 
 KNOWLEDGE_FILE = "ai_brain.json"
 USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
 ]
+
+# Thử import duckduckgo_search (nếu có)
+try:
+    from duckduckgo_search import DDGS
+    DDGS_AVAILABLE = True
+except ImportError:
+    DDGS_AVAILABLE = False
+    print("⚠️ duckduckgo_search không có sẵn, sẽ dùng fallback HTML.")
 
 # ================== LỚP AI ==================
 class SmartAI:
@@ -47,21 +53,68 @@ class SmartAI:
         with open(KNOWLEDGE_FILE, 'w', encoding='utf-8') as f:
             json.dump(self.brain, f, ensure_ascii=False, indent=2)
 
-    # ---------- TÌM KIẾM (dùng DuckDuckGo API chính thức) ----------
+    # ---------- TÌM KIẾM (DuckDuckGo API + HTML fallback) ----------
     def search_links(self, query, max_results=5):
-        """Trả về list {url, title}"""
+        """Trả về list {url, title} - hoạt động ổn định"""
+        # Cách 1: Dùng duckduckgo_search nếu có
+        if DDGS_AVAILABLE:
+            try:
+                with DDGS() as ddgs:
+                    results = list(ddgs.text(query, max_results=max_results))
+                    links = [{'url': r['href'], 'title': r['title']} for r in results]
+                    if links:
+                        print(f"✅ DuckDuckGo API trả về {len(links)} link")
+                        return links
+            except Exception as e:
+                print(f"⚠️ DuckDuckGo API lỗi: {e}, chuyển sang fallback HTML")
+
+        # Cách 2: Fallback parse DuckDuckGo Lite (dùng requests + BeautifulSoup)
+        print("🔁 Đang dùng fallback DuckDuckGo Lite HTML...")
         try:
-            with DDGS() as ddgs:
-                results = list(ddgs.text(query, max_results=max_results))
-                links = []
-                for r in results:
-                    links.append({
-                        'url': r['href'],
-                        'title': r['title']
-                    })
-                return links
+            url = f"https://lite.duckduckgo.com/lite/?q={query}"
+            resp = self.session.get(url, timeout=15)
+            if resp.status_code != 200:
+                print(f"❌ DuckDuckGo Lite HTTP {resp.status_code}")
+                return []
+
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            links = []
+
+            # Cấu trúc mới: kết quả nằm trong các dòng <td> của bảng
+            rows = soup.find_all('tr')
+            for row in rows:
+                # Tìm cột chứa link (thường có class='result-snippet' hoặc thẻ a)
+                link_cell = row.find('td', class_='result-snippet')
+                if not link_cell:
+                    # Thử tìm bất kỳ thẻ a nào trong row
+                    link_cell = row.find('a')
+                if link_cell:
+                    a_tag = link_cell.find('a') if link_cell.name != 'a' else link_cell
+                    if a_tag and a_tag.get('href'):
+                        href = a_tag['href']
+                        # Lọc link thật (bỏ qua link nội bộ duckduckgo)
+                        if href.startswith('http') and 'duckduckgo.com' not in href:
+                            title = a_tag.get_text(strip=True)
+                            if title:
+                                links.append({'url': href, 'title': title[:150]})
+                                if len(links) >= max_results:
+                                    break
+
+            # Nếu vẫn không có, quét toàn bộ thẻ a trong trang
+            if not links:
+                for a in soup.find_all('a', href=True):
+                    href = a['href']
+                    if href.startswith('http') and 'duckduckgo.com' not in href:
+                        title = a.get_text(strip=True)
+                        if title and len(title) > 5:
+                            links.append({'url': href, 'title': title[:150]})
+                            if len(links) >= max_results:
+                                break
+
+            print(f"✅ DuckDuckGo Lite fallback trả về {len(links)} link")
+            return links
         except Exception as e:
-            print(f"Lỗi tìm kiếm DuckDuckGo: {e}")
+            print(f"❌ Fallback HTML lỗi: {e}")
             return []
 
     # ---------- ĐỌC VÀ TRÍCH XUẤT CÂU ----------
@@ -74,11 +127,9 @@ class SmartAI:
                 return []
 
             soup = BeautifulSoup(resp.text, 'html.parser')
-            # Xóa thẻ rác
             for tag in soup(['script', 'style', 'nav', 'footer', 'header', 'aside']):
                 tag.decompose()
 
-            # Lấy text từ các thẻ chính
             texts = []
             for tag in soup.find_all(['p', 'li', 'div', 'article', 'section']):
                 text = tag.get_text(separator=' ', strip=True)
@@ -198,7 +249,7 @@ ai = SmartAI()
 def home():
     return jsonify({
         "name": "AI Tự Học",
-        "version": "2.0",
+        "version": "2.1",
         "endpoints": {
             "POST /learn": "Học một chủ đề. Body: { 'topic': 'python' }",
             "POST /ask": "Hỏi một câu hỏi. Body: { 'question': 'python là gì?' }",
